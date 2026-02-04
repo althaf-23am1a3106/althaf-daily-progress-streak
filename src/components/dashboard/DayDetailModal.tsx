@@ -12,8 +12,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { DayInfo, formatDisplayDate, formatDateKey } from '@/lib/dateUtils';
 import { useAccess } from '@/contexts/AccessContext';
-import { saveEntry, EntryFormData, DailyEntry } from '@/lib/api';
-import { CheckCircle, Circle, Link as LinkIcon, Image as ImageIcon, Plus, X, ExternalLink, Loader2 } from 'lucide-react';
+import { saveEntry, EntryFormData, DailyEntry, ProofImage, fetchEntryImages } from '@/lib/api';
+import { ImageGallery } from './ImageGallery';
+import { CheckCircle, Circle, Link as LinkIcon, Plus, X, ExternalLink, Loader2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface DayDetailModalProps {
@@ -29,6 +30,8 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
   const { isOwner } = useAccess();
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [images, setImages] = useState<ProofImage[]>([]);
+  const [loadingImages, setLoadingImages] = useState(false);
   const [formData, setFormData] = useState<EntryFormData>({
     description: '',
     learnings: '',
@@ -38,7 +41,7 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
   });
   const [newLink, setNewLink] = useState('');
 
-  // Reset form when entry changes
+  // Reset form and load images when entry changes
   useEffect(() => {
     if (entry) {
       setFormData({
@@ -48,6 +51,15 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
         images: [],
         isCompleted: entry.is_completed,
       });
+      
+      // Load images for this entry
+      if (entry.id) {
+        setLoadingImages(true);
+        fetchEntryImages(entry.id)
+          .then(setImages)
+          .catch(console.error)
+          .finally(() => setLoadingImages(false));
+      }
     } else {
       setFormData({
         description: '',
@@ -56,6 +68,7 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
         images: [],
         isCompleted: false,
       });
+      setImages([]);
     }
     setEditMode(false);
   }, [entry, isOpen]);
@@ -239,16 +252,20 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
             </div>
           </div>
 
-          {/* Images placeholder */}
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block flex items-center gap-2">
-              <ImageIcon className="h-4 w-4" />
-              Screenshots & Proof
-            </label>
-            <p className="text-muted-foreground text-sm">
-              {editMode ? 'Image upload coming soon...' : 'No images uploaded'}
-            </p>
-          </div>
+          {/* Images */}
+          {loadingImages ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading images...
+            </div>
+          ) : (
+            <ImageGallery
+              entryId={entry?.id}
+              images={images}
+              isEditing={editMode}
+              onImagesChange={setImages}
+            />
+          )}
 
           {/* Actions */}
           {isOwner && day.status !== 'future' && (

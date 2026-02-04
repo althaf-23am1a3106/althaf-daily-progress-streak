@@ -12,6 +12,15 @@ export interface DailyEntry {
   updated_at?: string;
 }
 
+export interface ProofImage {
+  id: string;
+  entry_id: string;
+  storage_path: string;
+  file_name: string;
+  created_at: string;
+  url: string;
+}
+
 export interface EntryFormData {
   description: string;
   learnings: string;
@@ -29,6 +38,16 @@ export interface AuthResponse {
 export interface SetupResponse {
   success: boolean;
   token?: string;
+  error?: string;
+}
+
+export interface ImageUploadResponse {
+  success: boolean;
+  image?: {
+    id: string;
+    url: string;
+    fileName: string;
+  };
   error?: string;
 }
 
@@ -87,6 +106,64 @@ export async function saveEntry(
   if (error) throw error;
   if (data.error) throw new Error(data.error);
   return data.entry;
+}
+
+// Upload image (owner only)
+export async function uploadImage(
+  token: string,
+  entryId: string,
+  file: File
+): Promise<ImageUploadResponse> {
+  // Convert file to base64
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  const base64 = btoa(String.fromCharCode(...bytes));
+
+  const { data, error } = await supabase.functions.invoke('owner-auth', {
+    body: { 
+      action: 'upload-image', 
+      token,
+      entryId,
+      fileName: file.name,
+      fileData: base64,
+      contentType: file.type
+    },
+  });
+  
+  if (error) throw error;
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+// Delete image (owner only)
+export async function deleteImage(token: string, imageId: string): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('owner-auth', {
+    body: { 
+      action: 'delete-image', 
+      token,
+      imageId
+    },
+  });
+  
+  if (error) throw error;
+  if (data.error) throw new Error(data.error);
+}
+
+// Fetch images for an entry (public)
+export async function fetchEntryImages(entryId: string): Promise<ProofImage[]> {
+  const { data, error } = await supabase
+    .from('proof_images')
+    .select('*')
+    .eq('entry_id', entryId)
+    .order('created_at', { ascending: true });
+  
+  if (error) throw error;
+  
+  // Add public URLs
+  return (data || []).map(img => ({
+    ...img,
+    url: supabase.storage.from('proof-images').getPublicUrl(img.storage_path).data.publicUrl
+  })) as ProofImage[];
 }
 
 // Fetch all entries (public)

@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import * as jose from "https://deno.land/x/jose@v4.14.4/index.ts";
 
 // Allowed origins for CORS
@@ -32,6 +31,81 @@ if (JWT_SECRET_STRING.length < 32) {
   throw new Error('JWT_SECRET must be at least 32 characters');
 }
 const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_STRING);
+
+// Password hashing using PBKDF2 (Web Crypto API - Deno compatible)
+const PBKDF2_ITERATIONS = 100000;
+const SALT_LENGTH = 16;
+const KEY_LENGTH = 32;
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const encoder = new TextEncoder();
+  const passwordKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  
+  const hash = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    passwordKey,
+    KEY_LENGTH * 8
+  );
+  
+  // Combine salt and hash, encode as base64
+  const combined = new Uint8Array(SALT_LENGTH + KEY_LENGTH);
+  combined.set(salt);
+  combined.set(new Uint8Array(hash), SALT_LENGTH);
+  
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function verifyPasswordHash(password: string, storedHash: string): Promise<boolean> {
+  try {
+    const combined = Uint8Array.from(atob(storedHash), c => c.charCodeAt(0));
+    const salt = combined.slice(0, SALT_LENGTH);
+    const originalHash = combined.slice(SALT_LENGTH);
+    
+    const encoder = new TextEncoder();
+    const passwordKey = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(password),
+      'PBKDF2',
+      false,
+      ['deriveBits']
+    );
+    
+    const newHash = await crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        salt: salt,
+        iterations: PBKDF2_ITERATIONS,
+        hash: 'SHA-256'
+      },
+      passwordKey,
+      KEY_LENGTH * 8
+    );
+    
+    // Constant-time comparison
+    const newHashArray = new Uint8Array(newHash);
+    if (originalHash.length !== newHashArray.length) return false;
+    
+    let result = 0;
+    for (let i = 0; i < originalHash.length; i++) {
+      result |= originalHash[i] ^ newHashArray[i];
+    }
+    return result === 0;
+  } catch {
+    return false;
+  }
+}
 
 const generateToken = async (): Promise<string> => {
   return await new jose.SignJWT({ role: 'owner' })
@@ -286,8 +360,8 @@ serve(async (req) => {
       || req.headers.get('x-real-ip')
       || 'unknown';
 
-    // Verify owner password using bcrypt
-    const verifyPassword = async (pwd: string): Promise<boolean> => {
+    // Verify owner password using PBKDF2
+    const verifyStoredPassword = async (pwd: string): Promise<boolean> => {
       const { data: settings } = await supabase
         .from('owner_settings')
         .select('password_hash')
@@ -295,7 +369,7 @@ serve(async (req) => {
 
       if (!settings) return false;
 
-      return await bcrypt.compare(pwd, settings.password_hash);
+      return await verifyPasswordHash(pwd, settings.password_hash);
     };
 
     // Check if first-time setup
@@ -347,8 +421,8 @@ serve(async (req) => {
         );
       }
 
-      // Hash password with bcrypt
-      const hash = await bcrypt.hash(newPassword);
+      // Hash password with PBKDF2
+      const hash = await hashPassword(newPassword);
       const { error } = await supabase
         .from('owner_settings')
         .insert({ password_hash: hash });
@@ -383,7 +457,7 @@ serve(async (req) => {
         );
       }
 
-      const isValid = await verifyPassword(password);
+      const isValid = await verifyStoredPassword(password);
 
       if (isValid) {
         // Generate JWT token
@@ -469,6 +543,148 @@ serve(async (req) => {
 
       return new Response(
         JSON.stringify({ success: true, entry: result.data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Upload image (requires valid token)
+    if (action === 'upload-image') {
+      const isValidToken = await verifyToken(token);
+      if (!isValidToken) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired session. Please log in again.' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { entryId, fileName, fileData, contentType } = await req.json().catch(() => ({}));
+      
+      if (!entryId || !fileName || !fileData || !contentType) {
+        return new Response(
+          JSON.stringify({ error: 'Missing required fields: entryId, fileName, fileData, contentType' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Validate content type
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      if (!allowedTypes.includes(contentType)) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid file type. Allowed: JPEG, PNG, GIF, WebP' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Decode base64 file data
+      const fileBytes = Uint8Array.from(atob(fileData), c => c.charCodeAt(0));
+      
+      // Max 5MB
+      if (fileBytes.length > 5 * 1024 * 1024) {
+        return new Response(
+          JSON.stringify({ error: 'File too large. Maximum 5MB allowed.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Generate unique file path
+      const timestamp = Date.now();
+      const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const storagePath = `${entryId}/${timestamp}_${sanitizedFileName}`;
+
+      // Upload to storage
+      const { error: uploadError } = await supabase.storage
+        .from('proof-images')
+        .upload(storagePath, fileBytes, {
+          contentType,
+          upsert: false
+        });
+
+      if (uploadError) {
+        return new Response(
+          JSON.stringify({ error: 'Failed to upload file' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('proof-images')
+        .getPublicUrl(storagePath);
+
+      // Save to proof_images table
+      const { data: imageRecord, error: dbError } = await supabase
+        .from('proof_images')
+        .insert({
+          entry_id: entryId,
+          storage_path: storagePath,
+          file_name: sanitizedFileName
+        })
+        .select()
+        .single();
+
+      if (dbError) {
+        // Clean up uploaded file
+        await supabase.storage.from('proof-images').remove([storagePath]);
+        return new Response(
+          JSON.stringify({ error: 'Failed to save image record' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          image: {
+            id: imageRecord.id,
+            url: urlData.publicUrl,
+            fileName: sanitizedFileName
+          }
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Delete image (requires valid token)
+    if (action === 'delete-image') {
+      const isValidToken = await verifyToken(token);
+      if (!isValidToken) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired session. Please log in again.' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { imageId } = await req.json().catch(() => ({}));
+      
+      if (!imageId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing imageId' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Get image record
+      const { data: imageRecord } = await supabase
+        .from('proof_images')
+        .select('storage_path')
+        .eq('id', imageId)
+        .single();
+
+      if (!imageRecord) {
+        return new Response(
+          JSON.stringify({ error: 'Image not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Delete from storage
+      await supabase.storage.from('proof-images').remove([imageRecord.storage_path]);
+
+      // Delete from database
+      await supabase.from('proof_images').delete().eq('id', imageId);
+
+      return new Response(
+        JSON.stringify({ success: true }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
