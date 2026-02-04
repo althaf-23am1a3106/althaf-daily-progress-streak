@@ -63,11 +63,11 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
   if (!day) return null;
 
   const handleSave = async () => {
-    const password = sessionStorage.getItem('ownerPassword');
-    if (!password) {
+    const token = sessionStorage.getItem('ownerToken');
+    if (!token) {
       toast({
-        title: 'Error',
-        description: 'Session expired. Please log in again.',
+        title: 'Session Expired',
+        description: 'Please log in again to continue.',
         variant: 'destructive',
       });
       return;
@@ -75,7 +75,7 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
 
     setSaving(true);
     try {
-      await saveEntry(password, track, formatDateKey(day.date), formData);
+      await saveEntry(token, track, formatDateKey(day.date), formData);
       toast({
         title: 'Saved!',
         description: 'Entry updated successfully.',
@@ -83,9 +83,10 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
       setEditMode(false);
       onSaved();
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save entry.';
       toast({
         title: 'Error',
-        description: 'Failed to save entry.',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {

@@ -20,6 +20,18 @@ export interface EntryFormData {
   isCompleted: boolean;
 }
 
+export interface AuthResponse {
+  valid: boolean;
+  token?: string;
+  error?: string;
+}
+
+export interface SetupResponse {
+  success: boolean;
+  token?: string;
+  error?: string;
+}
+
 // Check if first-time setup
 export async function checkOwnerSetup(): Promise<boolean> {
   const { data, error } = await supabase.functions.invoke('owner-auth', {
@@ -31,28 +43,28 @@ export async function checkOwnerSetup(): Promise<boolean> {
 }
 
 // Set up owner password
-export async function setupOwnerPassword(password: string): Promise<boolean> {
+export async function setupOwnerPassword(password: string): Promise<SetupResponse> {
   const { data, error } = await supabase.functions.invoke('owner-auth', {
     body: { action: 'setup-password', newPassword: password },
   });
   
   if (error) throw error;
-  return data.success;
+  return data;
 }
 
-// Verify owner password
-export async function verifyOwnerPassword(password: string): Promise<boolean> {
+// Verify owner password - returns token on success
+export async function verifyOwnerPassword(password: string): Promise<AuthResponse> {
   const { data, error } = await supabase.functions.invoke('owner-auth', {
     body: { action: 'verify-password', password },
   });
   
   if (error) throw error;
-  return data.valid;
+  return data;
 }
 
-// Save entry (owner only)
+// Save entry (owner only) - uses token for authentication
 export async function saveEntry(
-  password: string,
+  token: string,
   track: 'aiml' | 'dsa',
   date: string,
   entry: EntryFormData
@@ -60,7 +72,7 @@ export async function saveEntry(
   const { data, error } = await supabase.functions.invoke('owner-auth', {
     body: { 
       action: 'save-entry', 
-      password,
+      token,
       track,
       date,
       entry: {
