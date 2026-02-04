@@ -3,13 +3,35 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 import * as jose from "https://deno.land/x/jose@v4.14.4/index.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+// Allowed origins for CORS
+const ALLOWED_ORIGINS = [
+  'https://althaf-daily-progress-streak.lovable.app',
+  'https://id-preview--1b29bea9-4b20-4cb9-9885-e19114793c5d.lovable.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:8080'
+];
+
+const getCorsHeaders = (origin: string | null) => {
+  const isAllowed = origin && ALLOWED_ORIGINS.some(allowed => 
+    origin === allowed || origin.endsWith('.lovable.app')
+  );
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin : ALLOWED_ORIGINS[0],
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+    'Access-Control-Allow-Credentials': 'true',
+  };
 };
 
-// JWT configuration
-const JWT_SECRET = new TextEncoder().encode(Deno.env.get('JWT_SECRET') || 'fallback-secret-for-dev');
+// JWT configuration - MUST be set in production
+const JWT_SECRET_STRING = Deno.env.get('JWT_SECRET');
+if (!JWT_SECRET_STRING) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
+if (JWT_SECRET_STRING.length < 32) {
+  throw new Error('JWT_SECRET must be at least 32 characters');
+}
+const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_STRING);
 
 const generateToken = async (): Promise<string> => {
   return await new jose.SignJWT({ role: 'owner' })
@@ -245,6 +267,9 @@ function isStrongPassword(pwd: string): { valid: boolean; error?: string } {
 }
 
 serve(async (req) => {
+  const origin = req.headers.get('origin');
+  const corsHeaders = getCorsHeaders(origin);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
