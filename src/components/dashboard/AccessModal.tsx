@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -46,9 +46,14 @@ export function AccessModal({ isOpen }: AccessModalProps) {
     setLoading(true);
     
     try {
-      const isValid = await verifyOwnerPassword(password);
-      if (isValid) {
-        sessionStorage.setItem('ownerPassword', password);
+      const response = await verifyOwnerPassword(password);
+      
+      if (response.error) {
+        // Handle rate limiting
+        setError(response.error);
+      } else if (response.valid && response.token) {
+        // Store token (not password) in sessionStorage
+        sessionStorage.setItem('ownerToken', response.token);
         setMode('owner');
       } else {
         setError('Incorrect password');
@@ -63,8 +68,8 @@ export function AccessModal({ isOpen }: AccessModalProps) {
   const handleSetup = async () => {
     setError('');
     
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters');
       return;
     }
     
@@ -75,9 +80,13 @@ export function AccessModal({ isOpen }: AccessModalProps) {
 
     setLoading(true);
     try {
-      const success = await setupOwnerPassword(password);
-      if (success) {
-        sessionStorage.setItem('ownerPassword', password);
+      const response = await setupOwnerPassword(password);
+      
+      if (response.error) {
+        setError(response.error);
+      } else if (response.success && response.token) {
+        // Store token (not password) in sessionStorage
+        sessionStorage.setItem('ownerToken', response.token);
         setMode('owner');
       } else {
         setError('Failed to set up password');
@@ -108,7 +117,7 @@ export function AccessModal({ isOpen }: AccessModalProps) {
           <DialogDescription className="text-center">
             {view === 'choose' && 'How would you like to access this dashboard?'}
             {view === 'login' && 'Enter your password to access owner mode'}
-            {view === 'setup' && 'Create a password to protect owner access'}
+            {view === 'setup' && 'Create a password to protect owner access (min 8 characters)'}
           </DialogDescription>
         </DialogHeader>
 
@@ -198,7 +207,7 @@ export function AccessModal({ isOpen }: AccessModalProps) {
                   </label>
                   <Input
                     type="password"
-                    placeholder="At least 6 characters"
+                    placeholder="At least 8 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="bg-muted/50"

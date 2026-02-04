@@ -103,6 +103,27 @@ export type Database = {
           },
         ]
       }
+      rate_limits: {
+        Row: {
+          attempts: number | null
+          blocked_until: string | null
+          identifier: string
+          window_start: string | null
+        }
+        Insert: {
+          attempts?: number | null
+          blocked_until?: string | null
+          identifier: string
+          window_start?: string | null
+        }
+        Update: {
+          attempts?: number | null
+          blocked_until?: string | null
+          identifier?: string
+          window_start?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

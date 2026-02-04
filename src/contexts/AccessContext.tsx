@@ -18,8 +18,13 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Check for existing session
     const savedMode = sessionStorage.getItem('accessMode') as AccessMode;
-    if (savedMode) {
-      setModeState(savedMode);
+    const token = sessionStorage.getItem('ownerToken');
+    
+    // Only restore owner mode if we have a valid token
+    if (savedMode === 'owner' && token) {
+      setModeState('owner');
+    } else if (savedMode === 'viewer') {
+      setModeState('viewer');
     }
   }, []);
 
@@ -33,8 +38,9 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
-    setMode(null);
-    sessionStorage.removeItem('ownerAuthenticated');
+    setModeState(null);
+    // Clear all session data on logout
+    sessionStorage.clear();
   };
 
   return (
