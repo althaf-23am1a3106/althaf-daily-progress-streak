@@ -17,7 +17,12 @@ const getCorsHeaders = (origin: string | null) => {
 };
 
 // JWT configuration - validated at runtime
+// Cache the secret to avoid repeated env lookups
+let cachedJwtSecret: Uint8Array | null = null;
+
 function getJwtSecret(): Uint8Array {
+  if (cachedJwtSecret) return cachedJwtSecret;
+  
   const secret = Deno.env.get('JWT_SECRET');
   if (!secret) {
     throw new Error('JWT_SECRET environment variable is required');
@@ -25,7 +30,8 @@ function getJwtSecret(): Uint8Array {
   if (secret.length < 32) {
     throw new Error('JWT_SECRET must be at least 32 characters');
   }
-  return new TextEncoder().encode(secret);
+  cachedJwtSecret = new TextEncoder().encode(secret);
+  return cachedJwtSecret;
 }
 
 // Password hashing using PBKDF2 (Web Crypto API - Deno compatible)
