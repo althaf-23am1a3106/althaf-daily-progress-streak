@@ -3,34 +3,30 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as jose from "https://deno.land/x/jose@v4.14.4/index.ts";
 
 // Allowed origins for CORS
-const ALLOWED_ORIGINS = [
-  'https://althaf-daily-progress-streak.lovable.app',
-  'https://id-preview--1b29bea9-4b20-4cb9-9885-e19114793c5d.lovable.app',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://localhost:8080'
-];
-
 const getCorsHeaders = (origin: string | null) => {
-  const isAllowed = origin && ALLOWED_ORIGINS.some(allowed => 
-    origin === allowed || origin.endsWith('.lovable.app')
+  const isAllowed = origin && (
+    origin.endsWith('.lovable.app') ||
+    origin.endsWith('.lovableproject.com') ||
+    origin.startsWith('http://localhost:')
   );
   return {
-    'Access-Control-Allow-Origin': isAllowed ? origin : ALLOWED_ORIGINS[0],
+    'Access-Control-Allow-Origin': isAllowed ? origin : 'https://althaf-daily-progress-streak.lovable.app',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
     'Access-Control-Allow-Credentials': 'true',
   };
 };
 
-// JWT configuration - MUST be set in production
-const JWT_SECRET_STRING = Deno.env.get('JWT_SECRET');
-if (!JWT_SECRET_STRING) {
-  throw new Error('JWT_SECRET environment variable is required');
+// JWT configuration - validated at runtime
+function getJwtSecret(): Uint8Array {
+  const secret = Deno.env.get('JWT_SECRET');
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is required');
+  }
+  if (secret.length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 characters');
+  }
+  return new TextEncoder().encode(secret);
 }
-if (JWT_SECRET_STRING.length < 32) {
-  throw new Error('JWT_SECRET must be at least 32 characters');
-}
-const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_STRING);
 
 // Password hashing using PBKDF2 (Web Crypto API - Deno compatible)
 const PBKDF2_ITERATIONS = 100000;
@@ -112,12 +108,12 @@ const generateToken = async (): Promise<string> => {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('2h')
-    .sign(JWT_SECRET);
+    .sign(getJwtSecret());
 };
 
 const verifyToken = async (token: string): Promise<boolean> => {
   try {
-    const { payload } = await jose.jwtVerify(token, JWT_SECRET);
+    const { payload } = await jose.jwtVerify(token, getJwtSecret());
     return payload.role === 'owner';
   } catch {
     return false;
