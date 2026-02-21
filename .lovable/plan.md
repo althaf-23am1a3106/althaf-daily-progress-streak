@@ -1,128 +1,68 @@
 
 
-## 365-Day Discipline & Learning Streak Dashboard
+# Password Recovery via Email OTP
 
-A beautiful, interactive personal growth tracker with GitHub-style contribution grids, showcasing your daily consistency in AI/ML and DSA learning.
+## Overview
+Add a "Forgot password?" option to the owner login flow. When clicked, a 6-digit OTP is sent to the hardcoded owner email (`althafkhanpathan06@gmail.com`), which the owner then enters along with a new password to reset their credentials.
 
----
+## Prerequisites
+- A **Resend API key** needs to be stored as a secret (`RESEND_API_KEY`). You will be prompted to enter it.
 
-### 🎨 Visual Design & Theme
+## Changes
 
-**Modern Glassmorphism Style with Cool Tones**
-- Sleek gradient backgrounds transitioning from deep purple to soft blue to teal
-- Glass-effect cards with subtle blur and glow effects
-- Day boxes with rounded corners and soft glow on hover
-- Smooth animations and micro-interactions throughout
-- Light, airy color palette that feels calm yet motivating
+### 1. Store Resend API Key
+- Prompt you to securely save your `RESEND_API_KEY` as a backend secret.
 
----
+### 2. Database Migration
+Create a `password_reset_otps` table to store OTP codes:
 
-### 📱 Homepage Layout
+| Column | Type | Details |
+|--------|------|---------|
+| id | uuid | Primary key |
+| otp_hash | text | PBKDF2-hashed OTP (not stored in plain text) |
+| created_at | timestamptz | For expiry check (10 min window) |
+| used | boolean | Prevents reuse |
 
-**Hero Section**
-- Inspiring heading with your "Consistency" philosophy text (expandable dialog)
-- Your name/brand as the dashboard owner
-- Timeline display: Feb 4, 2026 → Feb 4, 2027
+RLS will be disabled for public access since the table is only accessed via the edge function using the service role key.
 
-**Tabbed Navigation**
-- Switch between AI/ML and DSA tracking grids
-- Each tab shows the full 365-day contribution grid
-- Mobile-friendly stacked layout
+### 3. Edge Function Updates (`owner-auth/index.ts`)
+Add two new actions to the existing edge function:
 
-**Stats Bar (for each track)**
-- 🔥 Current streak counter (days in a row)
-- ✅ Total days completed
-- 📊 Completion percentage with progress ring
-- 🏆 Milestone badges (7 days, 30 days, 100 days, etc.)
+**`request-otp`** action:
+- Rate-limited (3 requests per 15 minutes per IP)
+- Generates a random 6-digit code
+- Hashes it with PBKDF2 before storing in `password_reset_otps`
+- Sends the plain-text code to `althafkhanpathan06@gmail.com` via Resend
+- Returns a generic success message (does not confirm the email exists, for security)
 
-**Inspirational Quotes Section**
-- Rotating motivational quotes about consistency and discipline
+**`reset-password`** action:
+- Rate-limited
+- Accepts the OTP and new password
+- Verifies the OTP against hashed values in the database (only codes created within the last 10 minutes and not yet used)
+- Validates password strength using existing `isStrongPassword` function
+- Updates the password hash in `owner_settings`
+- Marks the OTP as used
+- Returns a JWT token for immediate login
 
----
+### 4. API Layer (`src/lib/api.ts`)
+Add two new functions:
+- `requestPasswordOtp()` -- calls `owner-auth` with `action: 'request-otp'`
+- `resetOwnerPassword(otp, newPassword)` -- calls `owner-auth` with `action: 'reset-password'`
 
-### 📅 365-Day Streak Grid
+### 5. Frontend (`AccessModal.tsx`)
+Add three new views to the existing modal state machine:
 
-**Day Box States (Clear Visual Distinction)**
+- **`forgot`** -- Shows a message that an OTP will be sent to the owner's email, with a "Send Code" button
+- **`verify-otp`** -- 6-digit OTP input field with a countdown timer and resend option
+- **`new-password`** -- New password + confirm password fields, then submits the reset
 
-| State | Appearance |
-|-------|------------|
-| **Completed** | Vibrant purple/blue gradient glow, filled color |
-| **Inactive/Empty** | Subtle gray outline, muted/transparent, clearly different |
-| **Today** | Special border highlight to show current day |
-| **Future** | Slightly dimmed, not yet available |
+A "Forgot password?" link will be added below the password input on the login view.
 
-**Visual Design**
-- Calendar-style layout with months labeled
-- All 365 boxes always visible (completed or not)
-- Completed days glow with color intensity
-- Empty/missed days remain visible but clearly muted
-- Hover effects reveal date and quick status
+## Technical Details
 
----
-
-### 📝 Day Detail Modal
-
-**Information Display**
-- Date header with completion status badge
-- Description of work done (or "No activity recorded")
-- Key learnings / progress summary
-- Proof of work section:
-  - Uploaded images/screenshots in a gallery
-  - External links (GitHub, articles, etc.)
-
-**For Viewers**: Read-only access
-**For Owner**: Full edit capabilities
-
----
-
-### 🔐 Access Control System
-
-**Landing Experience**
-- Clean modal asking: "How would you like to access?"
-- Two options: Viewer or Owner
-
-**Viewer Mode**
-- Full read access to all grids and day details
-- Cannot modify anything
-
-**Owner Mode**
-- Password-protected login (set up on first visit)
-- Full control:
-  - Add/edit daily descriptions
-  - Upload proof screenshots and files
-  - Mark days as complete/incomplete
-  - Changes save immediately and visible to all
-
----
-
-### 📈 Progress Analytics
-
-**Weekly/Monthly Summary Views**
-- Toggle between week and month views
-- Visual charts showing consistency patterns
-- Identify productive periods and gaps
-
-**Achievement Milestones**
-- Celebrate streak milestones (7, 14, 30, 60, 90, 180, 365 days)
-- Visual badges on dashboard
-
----
-
-### 🗄️ Backend (Lovable Cloud + Supabase)
-
-**Data Storage**
-- Daily entries with descriptions and learnings
-- File uploads for proof of work
-- Streak calculations and statistics
-
-**Authentication**
-- Secure owner login with password
-- First-time credential setup
-
----
-
-### 📱 Responsive Design
-
-- Desktop: Full grid view with stats
-- Mobile: Stacked layout with touch-friendly navigation
+- The owner email (`althafkhanpathan06@gmail.com`) is hardcoded in the edge function only (not exposed to the frontend)
+- OTPs are hashed before storage using the existing PBKDF2 functions
+- OTPs expire after 10 minutes
+- Old unused OTPs are cleaned up when a new one is requested
+- The Resend `from` address will use `onboarding@resend.dev` (Resend's default sandbox sender) unless you have a verified domain
 
