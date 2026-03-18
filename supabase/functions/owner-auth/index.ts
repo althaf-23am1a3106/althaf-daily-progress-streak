@@ -355,7 +355,7 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { action, password, newPassword, entry, track, date, token } = await req.json();
+    const { action, password, newPassword, entry, track, date, token, otp } = await req.json();
 
     // Get client IP for rate limiting - use rightmost X-Forwarded-For value (set by trusted proxy)
     const forwardedFor = req.headers.get('x-forwarded-for');
