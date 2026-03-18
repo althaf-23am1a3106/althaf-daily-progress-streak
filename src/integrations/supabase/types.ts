@@ -71,6 +71,27 @@ export type Database = {
         }
         Relationships: []
       }
+      password_reset_otps: {
+        Row: {
+          created_at: string
+          id: string
+          otp_hash: string
+          used: boolean
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          otp_hash: string
+          used?: boolean
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          otp_hash?: string
+          used?: boolean
+        }
+        Relationships: []
+      }
       proof_images: {
         Row: {
           created_at: string
