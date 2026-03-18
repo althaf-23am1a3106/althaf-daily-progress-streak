@@ -213,3 +213,26 @@ export function subscribeToEntries(callback: (payload: any) => void) {
     )
     .subscribe();
 }
+
+// Request password reset OTP
+export async function requestPasswordOtp(): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase.functions.invoke('owner-auth', {
+    body: { action: 'request-otp' },
+  });
+  
+  if (error) throw error;
+  return data;
+}
+
+// Reset owner password with OTP
+export async function resetOwnerPassword(
+  otp: string,
+  newPassword: string
+): Promise<{ success: boolean; token?: string; error?: string }> {
+  const { data, error } = await supabase.functions.invoke('owner-auth', {
+    body: { action: 'reset-password', otp, newPassword },
+  });
+  
+  if (error) throw error;
+  return data;
+}
