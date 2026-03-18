@@ -811,7 +811,7 @@ serve(async (req) => {
 
     // Reset password with OTP
     if (action === 'reset-password') {
-      const { otp, newPassword: resetNewPassword } = await req.json().catch(() => ({}));
+      const resetNewPassword = newPassword;
 
       // Rate limit reset attempts
       const resetRateKey = `reset_${clientIP}`;
