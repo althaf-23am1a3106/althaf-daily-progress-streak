@@ -692,6 +692,222 @@ serve(async (req) => {
       );
     }
 
+    // Request OTP for password reset
+    if (action === 'request-otp') {
+      // Rate limit OTP requests (3 per 15 minutes)
+      const otpRateKey = `otp_${clientIP}`;
+      const { data: otpRateData } = await supabase
+        .from('rate_limits')
+        .select('*')
+        .eq('identifier', otpRateKey)
+        .single();
+
+      const now = new Date();
+      const OTP_WINDOW_MS = 900000; // 15 minutes
+      const OTP_MAX_ATTEMPTS = 3;
+
+      if (otpRateData) {
+        const windowStart = new Date(otpRateData.window_start);
+        const timeSince = now.getTime() - windowStart.getTime();
+
+        if (timeSince < OTP_WINDOW_MS && otpRateData.attempts >= OTP_MAX_ATTEMPTS) {
+          const retryAfter = Math.ceil((OTP_WINDOW_MS - timeSince) / 1000);
+          return new Response(
+            JSON.stringify({ error: 'Too many requests. Try again later.', retryAfter }),
+            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        if (timeSince < OTP_WINDOW_MS) {
+          await supabase
+            .from('rate_limits')
+            .update({ attempts: otpRateData.attempts + 1 })
+            .eq('identifier', otpRateKey);
+        } else {
+          await supabase
+            .from('rate_limits')
+            .update({ attempts: 1, window_start: now.toISOString(), blocked_until: null })
+            .eq('identifier', otpRateKey);
+        }
+      } else {
+        await supabase
+          .from('rate_limits')
+          .insert({ identifier: otpRateKey, attempts: 1, window_start: now.toISOString() });
+      }
+
+      // Check that owner is set up
+      const { data: ownerCheck } = await supabase
+        .from('owner_settings')
+        .select('id')
+        .single();
+
+      if (!ownerCheck) {
+        // Don't reveal whether owner exists
+        return new Response(
+          JSON.stringify({ success: true, message: 'If an account exists, a code has been sent.' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Invalidate old unused OTPs
+      await supabase
+        .from('password_reset_otps')
+        .delete()
+        .eq('used', false);
+
+      // Generate 6-digit OTP
+      const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+
+      // Hash OTP before storing
+      const otpHash = await hashPassword(otpCode);
+      await supabase
+        .from('password_reset_otps')
+        .insert({ otp_hash: otpHash });
+
+      // Send via Resend
+      const resendKey = Deno.env.get('RESEND_API_KEY');
+      if (!resendKey) {
+        console.error('RESEND_API_KEY not configured');
+        return new Response(
+          JSON.stringify({ error: 'Email service not configured' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const OWNER_EMAIL = 'althafkhanpathan06@gmail.com';
+
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${resendKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: 'onboarding@resend.dev',
+          to: [OWNER_EMAIL],
+          subject: 'Password Reset Code',
+          html: `<div style="font-family:Arial,sans-serif;max-width:400px;margin:0 auto;padding:20px;">
+            <h2 style="text-align:center;color:#333;">Password Reset</h2>
+            <p style="color:#555;">Your verification code is:</p>
+            <div style="text-align:center;font-size:32px;font-weight:bold;letter-spacing:8px;padding:20px;background:#f5f5f5;border-radius:8px;margin:16px 0;">${otpCode}</div>
+            <p style="color:#888;font-size:12px;">This code expires in 10 minutes. If you didn't request this, ignore this email.</p>
+          </div>`,
+        }),
+      });
+
+      if (!emailRes.ok) {
+        console.error('Resend error:', await emailRes.text());
+        return new Response(
+          JSON.stringify({ error: 'Failed to send email' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'If an account exists, a code has been sent.' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Reset password with OTP
+    if (action === 'reset-password') {
+      const { otp, newPassword: resetNewPassword } = await req.json().catch(() => ({}));
+
+      // Rate limit reset attempts
+      const resetRateKey = `reset_${clientIP}`;
+      const resetRateLimit = await checkRateLimit(supabase, resetRateKey);
+      if (!resetRateLimit.allowed) {
+        return new Response(
+          JSON.stringify({ error: 'Too many attempts. Try again later.', retryAfter: resetRateLimit.retryAfter }),
+          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (!otp || typeof otp !== 'string' || !/^\d{6}$/.test(otp)) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid code format' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (!resetNewPassword || typeof resetNewPassword !== 'string') {
+        return new Response(
+          JSON.stringify({ error: 'New password is required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Validate password strength
+      const pwdValidation = isStrongPassword(resetNewPassword);
+      if (!pwdValidation.valid) {
+        return new Response(
+          JSON.stringify({ error: pwdValidation.error }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Get unused OTPs from the last 10 minutes
+      const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const { data: otpRecords } = await supabase
+        .from('password_reset_otps')
+        .select('*')
+        .eq('used', false)
+        .gte('created_at', tenMinAgo)
+        .order('created_at', { ascending: false });
+
+      if (!otpRecords || otpRecords.length === 0) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired code' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Verify OTP against stored hashes
+      let matchedOtpId: string | null = null;
+      for (const record of otpRecords) {
+        const isMatch = await verifyPasswordHash(otp, record.otp_hash);
+        if (isMatch) {
+          matchedOtpId = record.id;
+          break;
+        }
+      }
+
+      if (!matchedOtpId) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired code' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Mark OTP as used
+      await supabase
+        .from('password_reset_otps')
+        .update({ used: true })
+        .eq('id', matchedOtpId);
+
+      // Update owner password
+      const newHash = await hashPassword(resetNewPassword);
+      const { error: updateError } = await supabase
+        .from('owner_settings')
+        .update({ password_hash: newHash })
+        .not('id', 'is', null); // update all rows (should be only 1)
+
+      if (updateError) {
+        return new Response(
+          JSON.stringify({ error: 'Failed to update password' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Generate token for immediate login
+      const authToken = await generateToken();
+
+      return new Response(
+        JSON.stringify({ success: true, token: authToken }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     return new Response(
       JSON.stringify({ error: 'Invalid action' }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
