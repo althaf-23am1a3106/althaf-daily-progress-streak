@@ -357,10 +357,11 @@ serve(async (req) => {
 
     const { action, password, newPassword, entry, track, date, token } = await req.json();
 
-    // Get client IP for rate limiting
-    const clientIP = req.headers.get('x-forwarded-for')?.split(',')[0].trim()
-      || req.headers.get('x-real-ip')
-      || 'unknown';
+    // Get client IP for rate limiting - use rightmost X-Forwarded-For value (set by trusted proxy)
+    const forwardedFor = req.headers.get('x-forwarded-for');
+    const clientIP = forwardedFor
+      ? forwardedFor.split(',').at(-1)!.trim()
+      : req.headers.get('x-real-ip') ?? 'unknown';
 
     // Verify owner password using PBKDF2
     const verifyStoredPassword = async (pwd: string): Promise<boolean> => {
