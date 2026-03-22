@@ -1,8 +1,8 @@
 // Dashboard configuration constants
 
 export const DASHBOARD_CONFIG = {
-  startDate: new Date('2026-04-04'),
-  endDate: new Date('2027-04-04'),
+  startDate: new Date('2026-04-01'),
+  endDate: new Date('2027-04-01'),
   totalDays: 365,
   owner: {
     name: 'Your Name',
