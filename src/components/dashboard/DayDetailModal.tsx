@@ -57,7 +57,9 @@ export function DayDetailModal({ day, entry, track, isOpen, onClose, onSaved }: 
         setLoadingImages(true);
         fetchEntryImages(entry.id)
           .then(setImages)
-          .catch(console.error)
+          .catch(() => {
+            toast({ title: 'Could not load images', variant: 'destructive' });
+          })
           .finally(() => setLoadingImages(false));
       }
     } else {
