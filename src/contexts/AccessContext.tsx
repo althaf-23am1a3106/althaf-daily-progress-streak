@@ -20,13 +20,44 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     const savedMode = sessionStorage.getItem('accessMode') as AccessMode;
     const token = sessionStorage.getItem('ownerToken');
     
-    // Only restore owner mode if we have a valid token
+    // Only restore owner mode if we have a valid, non-expired token
     if (savedMode === 'owner' && token) {
-      setModeState('owner');
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          // Token expired — clear and force re-login
+          sessionStorage.removeItem('ownerToken');
+          sessionStorage.removeItem('accessMode');
+        } else {
+          setModeState('owner');
+        }
+      } catch {
+        sessionStorage.removeItem('ownerToken');
+        sessionStorage.removeItem('accessMode');
+      }
     } else if (savedMode === 'viewer') {
       setModeState('viewer');
     }
   }, []);
+
+  // Proactive token expiry detection — check every 60s
+  useEffect(() => {
+    if (mode !== 'owner') return;
+    const interval = setInterval(() => {
+      const token = sessionStorage.getItem('ownerToken');
+      if (!token) return;
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          setModeState(null);
+          sessionStorage.clear();
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [mode]);
 
   const setMode = (newMode: AccessMode) => {
     setModeState(newMode);
