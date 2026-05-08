@@ -755,8 +755,10 @@ serve(async (req) => {
         .delete()
         .eq('used', false);
 
-      // Generate 6-digit OTP
-      const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+      // Generate 6-digit OTP using cryptographically secure RNG
+      const otpArray = new Uint32Array(1);
+      crypto.getRandomValues(otpArray);
+      const otpCode = String(100000 + (otpArray[0] % 900000));
 
       // Hash OTP before storing
       const otpHash = await hashPassword(otpCode);
